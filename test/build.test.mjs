@@ -29,8 +29,11 @@ test("markdown renders, wikilinks resolve, code fences stay literal", async () =
   await build(repo, { quiet: true });
 
   const html = read(repo, "notes/one.html");
-  assert.match(html, /<a href="\/notes\/two\.html">Two<\/a>/);
-  assert.match(html, /<a href="\/notes\/two\.html">other<\/a>/);
+  // Pages serves two.html at /notes/two and 308s the .html form, so links
+  // must already be in the canonical extensionless shape.
+  assert.match(html, /<a href="\/notes\/two">Two<\/a>/);
+  assert.match(html, /<a href="\/notes\/two">other<\/a>/);
+  assert.doesNotMatch(html, /href="[^"]*\.html"/, "links must not carry .html");
   assert.match(html, /\[\[literal\]\]/, "code fence contents must not be linkified");
 });
 

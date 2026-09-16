@@ -76,7 +76,12 @@ function walk(dir, repo, out = []) {
   return out;
 }
 
-const urlOf = (rel) => "/" + rel.split(/[\\/]/).join("/").replace(/\.md$/i, ".html");
+// Cloudflare Pages serves foo.html at /foo and 308-redirects the .html form,
+// so links point at the canonical extensionless URL and skip the round trip.
+const urlOf = (rel) => {
+  const p = "/" + rel.split(/[\\/]/).join("/");
+  return p.replace(/\/index\.(md|html?)$/i, "/").replace(/\.(md|html?)$/i, "");
+};
 const kindOf = (rel) =>
   /\.md$/i.test(rel) || /\.html?$/i.test(rel)
     ? "page"
