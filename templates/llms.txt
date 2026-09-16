@@ -1,0 +1,53 @@
+# dumpyard — instructions for LLMs
+
+A static site of pages, notes, PDFs and images. Any folder can sit behind its
+own password; locking `/project-xyz/` covers everything under it.
+
+## Publish
+
+Use the CLI. Do not hand-edit generated files.
+
+```sh
+dumpyard publish report.html                    # public, at /report/
+dumpyard publish notes.md --space project-xyz   # into an existing folder
+dumpyard publish ./project-xyz/ --set-password  # whole folder, one password
+```
+
+`--set-password` prints the password exactly once. Capture it from stdout and
+give it to the human — it is stored nowhere and cannot be recovered.
+
+## What you write, what the build writes
+
+You write: `.md`, self-contained `.html`, `.pdf`, images.
+The build writes: every `index.html`, and `foo.html` for each `foo.md`.
+
+Never edit `functions/locks.js`, any `index.html`, or a `foo.html` that has a
+`foo.md` beside it — all four are regenerated and your changes will vanish.
+
+## Markdown
+
+Obsidian-style links work and resolve at build time:
+
+```
+[[note]]           [[note|custom label]]        [[folder/note]]
+![[diagram.png]]   ![[spec.pdf]]
+```
+
+A link that does not resolve renders as a visible broken-link span and the
+build prints a warning. Fix it rather than leaving it.
+
+## Rules
+
+- HTML pages are self-contained: inline CSS and JS, no frameworks, no external
+  requests. Images and PDFs sit beside the page as normal files.
+- Every markdown note starts with a `# Heading` — it becomes the title and the
+  label other notes link it by.
+- Folder names are lowercase kebab-case.
+- Never commit a password or a token. Only salted hashes belong in this repo,
+  and only the CLI writes them.
+
+## Locked folders
+
+A locked folder is deliberately absent from any public index, so after locking
+something, give the human the URL directly. Tell them plainly which pages are
+locked and which are public.

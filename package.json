@@ -1,0 +1,12 @@
+{
+  "name": "dumpyard",
+  "version": "0.1.0",
+  "description": "Publish self-contained pages, notes, PDFs and images to a static site, each path behind its own password.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "dumpyard": "bin/dumpyard.mjs" },
+  "files": ["bin", "src", "templates"],
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": { "marked": "^15.0.0" }
+}
