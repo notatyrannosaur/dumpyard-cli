@@ -9,15 +9,15 @@ dumpyard publish ./project-xyz/ --set-password
 ```
 
 ```
-locked /project-xyz/
-password: m4hmU_WMJvhk
-Shown once — it is stored nowhere and cannot be recovered.
-
 https://my-site.you.workers.dev/project-xyz/
+password: m4hmU_WMJvhk   (any username works at the prompt)
 ```
 
 Send someone that link and that password. One password unlocks the whole
 folder — every page, note, PDF and image under it.
+
+Forgot it? `dumpyard password /project-xyz/`. Passwords are kept, not thrown
+away — see below.
 
 ## First-time setup
 
@@ -88,6 +88,27 @@ insist on choosing your own with `--password`, it must be 12+ characters.
   the link degrades to plain text rather than publishing a title and URL.
   Authenticated responses go out `private, no-store`.
 
+## Passwords are retrievable
+
+```sh
+dumpyard list                     # every lock, with its password
+dumpyard password /project-xyz/   # just the password
+```
+
+This is a tool for publishing agent-generated artifacts. Nobody memorises a
+generated password, and an agent that cannot read one back cannot re-share the
+link — so the CLI keeps every password it issues in
+`~/.config/dumpyard/passwords.json`, mode `0600`.
+
+That file lives in `~/.config`, **never** inside the content repo. `init`
+refuses a repo that would contain it, because committing it would push your
+passwords to your git host and deploy them to the edge. Point it elsewhere with
+`DUMPYARD_HOME` if you keep separate profiles.
+
+The trust boundary is the public internet, not your own disk. If that is not
+your threat model — shared machine, untrusted local users — this is the wrong
+tool.
+
 ## Commands
 
 ```
@@ -134,8 +155,8 @@ silently, with no error. There is a test asserting it stays true.
 
 ## What this does not do
 
-- **It cannot revoke a link someone already opened.** Changing a password stops
-  future access, not a copy already downloaded.
+- **It cannot revoke a link someone already opened.** Changing a password or
+  running `remove` stops future access, not a copy already downloaded.
 - **No per-recipient identity, no expiry.** Anyone with the link and password
   can pass both on. If you need real identity, use Cloudflare Access instead.
 - **HTTP Basic has no logout.** Closing the browser is the logout.

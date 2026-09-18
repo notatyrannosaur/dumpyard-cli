@@ -3,9 +3,9 @@
 A static site of pages, notes, PDFs and images. Any folder can sit behind its
 own password; locking `/project-xyz/` covers everything under it.
 
-## Publish
+Use the `dumpyard` CLI. Do not hand-edit generated files.
 
-Use the CLI. Do not hand-edit generated files.
+## Publish
 
 ```sh
 dumpyard publish report.html                    # public, at /report/
@@ -13,16 +13,40 @@ dumpyard publish notes.md --space project-xyz   # into an existing folder
 dumpyard publish ./project-xyz/ --set-password  # whole folder, one password
 ```
 
-`--set-password` prints the password exactly once. Capture it from stdout and
-give it to the human — it is stored nowhere and cannot be recovered.
+Each command commits, pushes and deploys. The URL is live in seconds.
+
+## Passwords are retrievable — you do not need to remember them
+
+```sh
+dumpyard list                  # every lock, with its password
+dumpyard password /project-xyz/   # just the password, for scripting
+```
+
+The CLI keeps every password it issues in `~/.config/dumpyard/passwords.json`
+(mode 0600, outside the repo, never deployed). Read one back whenever you need
+to re-share a link — republishing a locked folder prints its existing password
+without changing it.
+
+So: give the human the link and the password every time you publish or
+republish something locked. Never tell them a password is unrecoverable.
+
+## Remove
+
+```sh
+dumpyard remove /project-xyz/     # whole folder
+dumpyard remove /project-xyz/notes  # one page
+```
+
+This deletes the content, drops the lock, forgets the password and deploys. The
+content stays in git history, so it is recoverable; the live URL is not.
 
 ## What you write, what the build writes
 
-You write: `.md`, self-contained `.html`, `.pdf`, images.
+You write: `.md`, self-contained `.html`, `.pdf`, images — into `public/`.
 The build writes: every `index.html`, and `foo.html` for each `foo.md`.
 
-Never edit `functions/locks.js`, any `index.html`, or a `foo.html` that has a
-`foo.md` beside it — all four are regenerated and your changes will vanish.
+Never edit `worker/locks.js`, `wrangler.jsonc`, any `index.html`, or a
+`foo.html` that has a `foo.md` beside it. All are regenerated or load-bearing.
 
 ## Markdown
 
@@ -33,8 +57,10 @@ Obsidian-style links work and resolve at build time:
 ![[diagram.png]]   ![[spec.pdf]]
 ```
 
-A link that does not resolve renders as a visible broken-link span and the
-build prints a warning. Fix it rather than leaving it.
+A link that does not resolve renders as visible plain text and the build warns.
+A public page cannot link into a locked folder — that link is dropped on
+purpose, so a public index never leaks a locked title or URL. Fix warnings
+rather than leaving them.
 
 ## Rules
 
@@ -43,11 +69,14 @@ build prints a warning. Fix it rather than leaving it.
 - Every markdown note starts with a `# Heading` — it becomes the title and the
   label other notes link it by.
 - Folder names are lowercase kebab-case.
-- Never commit a password or a token. Only salted hashes belong in this repo,
-  and only the CLI writes them.
+- Never put a password, token or key in the repo. Only salted hashes belong
+  there, and only the CLI writes them.
 
-## Locked folders
+## Handing over
 
-A locked folder is deliberately absent from any public index, so after locking
-something, give the human the URL directly. Tell them plainly which pages are
-locked and which are public.
+A locked folder is deliberately absent from every public index, so the URL is
+the only way in. When you finish, tell the human:
+
+- the URL
+- the password, if the folder is locked
+- which parts are public and which are not

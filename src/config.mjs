@@ -4,10 +4,12 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const FILE = join(homedir(), ".config", "dumpyard", "config.json");
+// Same DUMPYARD_HOME override as the password store.
+const home = () => process.env.DUMPYARD_HOME ?? join(homedir(), ".config", "dumpyard");
+const FILE = () => join(home(), "config.json");
 
 export function loadConfig(overrides = {}) {
-  const stored = existsSync(FILE) ? JSON.parse(readFileSync(FILE, "utf8")) : {};
+  const stored = existsSync(FILE()) ? JSON.parse(readFileSync(FILE(), "utf8")) : {};
   const config = {
     url: "https://example.pages.dev",
     ...stored,
@@ -25,7 +27,7 @@ export function loadConfig(overrides = {}) {
 }
 
 export function saveConfig(config) {
-  mkdirSync(join(homedir(), ".config", "dumpyard"), { recursive: true });
-  writeFileSync(FILE, JSON.stringify(config, null, 2) + "\n");
-  return FILE;
+  mkdirSync(home(), { recursive: true });
+  writeFileSync(FILE(), JSON.stringify(config, null, 2) + "\n");
+  return FILE();
 }

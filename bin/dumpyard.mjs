@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, existsSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, existsSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { join, basename, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, saveConfig } from "../src/config.mjs";
 import { build } from "../src/build.mjs";
 import * as locks from "../src/locks.mjs";
+import * as store from "../src/store.mjs";
 
 const TEMPLATES = fileURLToPath(new URL("../templates", import.meta.url));
 
@@ -27,15 +28,21 @@ const HELP = `dumpyard — publish pages, notes, PDFs and images, each path behi
     --no-push                      don't push to git
     --no-deploy                    don't deploy to Cloudflare
 
+  dumpyard remove <path>           unpublish a folder or page, and deploy
   dumpyard lock <path>             lock an existing path, e.g. /project-xyz/
     --password <value>
   dumpyard unlock <path>           make it public again
-  dumpyard list                    what is locked
+  dumpyard list                    every lock, with its password
+  dumpyard password <path>         print one password, nothing else
   dumpyard build                   re-render markdown and regenerate indexes
   dumpyard deploy                  deploy to Cloudflare with wrangler
   dumpyard init --repo <path>      scaffold a content repo and remember it
     --url <https://...>            the site's public base URL
   dumpyard upgrade                 refresh the gate and llms.txt from this CLI
+
+Passwords are kept in ~/.config/dumpyard/passwords.json (mode 0600, override the
+directory with DUMPYARD_HOME) so they can
+be read back. They are never written into the repo, so they are never deployed.
 `;
 
 const { values: flags, positionals } = parseArgs({
@@ -57,6 +64,8 @@ const [command, ...args] = positionals;
 const git = (repo, ...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8" }).trim();
 const slug = (s) =>
   basename(s, extname(s)).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "untitled";
+// "/project-xyz/" | "project-xyz" | "/project-xyz/notes" -> "project-xyz[/notes]"
+const rel = (p) => String(p ?? "").replace(/^\/+|\/+$/g, "");
 
 try {
   await main();
@@ -70,9 +79,13 @@ async function main() {
 
   if (command === "init") {
     const repo = resolve(flags.repo ?? process.cwd());
+    // A repo containing the password store would commit, push and deploy it.
+    if (store.wouldContainStore(repo)) {
+      throw new Error(`refusing: ${repo} would contain the password store (${store.storePath()})`);
+    }
     mkdirSync(repo, { recursive: true });
-    for (const rel of [...CODE, ...MACHINE, ...ONCE]) {
-      if (CODE.includes(rel) || !existsSync(join(repo, rel))) place(repo, rel);
+    for (const r of [...CODE, ...MACHINE, ...ONCE]) {
+      if (CODE.includes(r) || !existsSync(join(repo, r))) place(repo, r);
     }
     nameProject(repo);
     if (!existsSync(join(repo, ".git"))) {
@@ -82,15 +95,13 @@ async function main() {
     await build(repo, { quiet: true });
     const url = flags.url ?? "https://example.workers.dev";
     console.log(`scaffolded ${repo}\nremembered in ${saveConfig({ repo, url })}`);
-    if (!flags.url) console.log("set the real URL later: dumpyard init --repo <path> --url https://...");
+    if (!flags.url) console.log("run `dumpyard deploy` to publish it and learn its URL");
     return;
   }
 
   if (command === "upgrade") {
     const repo = resolve(flags.repo ?? loadConfig().repo);
-    // Machine-owned files only. locks.js, wrangler.jsonc, README.md and your
-    // content are never touched.
-    for (const rel of [...CODE, ...MACHINE]) place(repo, rel);
+    for (const r of [...CODE, ...MACHINE]) place(repo, r);
     await build(repo, { quiet: true });
     return console.log(`refreshed the gate and llms.txt in ${repo}`);
   }
@@ -98,8 +109,22 @@ async function main() {
   const { repo, url } = loadConfig({ repo: flags.repo, url: flags.url });
 
   if (command === "list") {
-    const paths = Object.keys(await locks.load(repo)).sort();
-    return console.log(paths.length ? paths.join("\n") : "nothing is locked");
+    const table = await locks.load(repo);
+    const paths = Object.keys(table).sort();
+    if (!paths.length) return console.log("nothing is locked");
+    const width = Math.max(...paths.map((p) => p.length));
+    for (const p of paths) {
+      const pw = store.recall(repo, p);
+      console.log(`${p.padEnd(width)}  ${pw ?? "(password not stored on this machine)"}`);
+    }
+    return;
+  }
+
+  if (command === "password") {
+    const path = locks.checkPath(args[0]);
+    const pw = store.recall(repo, path);
+    if (!pw) throw new Error(`no stored password for ${path}`);
+    return console.log(pw);
   }
 
   if (command === "build") return void (await build(repo));
@@ -112,16 +137,20 @@ async function main() {
   }
 
   if (command === "lock") {
-    const password = await locks.lock(repo, args[0], flags.password);
+    const password = await locks.lock(repo, args[0], flags.password, url);
     await build(repo, { quiet: true });
     console.log(`locked ${args[0]}`);
     console.log(`password: ${password}`);
-    return console.log("Shown once. Deploy to apply it.");
+    return console.log("Deploy to apply it. Readable later with `dumpyard password`.");
   }
 
+  if (command === "remove") return void (await remove(repo, url));
   if (command !== "publish") throw new Error(`unknown command "${command}"\n\n${HELP}`);
-  if (!args.length) throw new Error("publish needs at least one file or directory");
+  return void (await publish(repo, url));
+}
 
+async function publish(repo, url) {
+  if (!args.length) throw new Error("publish needs at least one file or directory");
   const space = flags.space ?? slug(args[0]);
   if (!/^[a-z0-9][a-z0-9-]*$/.test(space)) {
     throw new Error(`bad space name "${space}" — lowercase letters, digits and dashes only`);
@@ -137,14 +166,8 @@ async function main() {
     console.log(`added ${space}/${isDir ? "" : basename(src)}`);
   }
 
-  let password;
   if (flags.password || flags["set-password"]) {
-    password = await locks.lock(repo, `/${space}/`, flags.password);
-    // Print it now. A generated password exists nowhere else, so it must not be
-    // lost to a build, git or deploy failure further down.
-    console.log(`\nlocked /${space}/`);
-    console.log(`password: ${password}`);
-    console.log("Shown once — it is stored nowhere and cannot be recovered.\n");
+    await locks.lock(repo, `/${space}/`, flags.password, url);
   }
   await build(repo);
 
@@ -157,6 +180,9 @@ async function main() {
   const pushed = !flags["no-push"] && push(repo);
   const deployed = !flags["no-deploy"] && deploy(repo, { loud: false, url });
 
+  // Show the password whether it was just set or set on an earlier publish —
+  // re-sharing a link shouldn't mean re-locking it.
+  const password = store.recall(repo, `/${space}/`);
   console.log(`\n${url}/${space}/`);
   if (password) {
     console.log(`password: ${password}   (any username works at the prompt)`);
@@ -166,11 +192,43 @@ async function main() {
   else if (pushed) console.log("\nPushed. Cloudflare rebuilds if Git builds are connected.");
 }
 
+async function remove(repo, url) {
+  const target = rel(args[0]);
+  if (!target) throw new Error("remove needs a path, e.g. /project-xyz/");
+  const base = join(repo, "public", target);
+  // A page may be the markdown source, the rendered html, or a whole folder.
+  const hits = [base, `${base}.md`, `${base}.html`].filter((f) => existsSync(f));
+  if (!hits.length) throw new Error(`nothing published at /${target}/`);
+
+  pull(repo);
+  for (const f of hits) {
+    rmSync(f, { recursive: true, force: true });
+    console.log(`removed ${f.slice(join(repo, "public").length + 1)}`);
+  }
+  const dropped = await locks.unlockUnder(repo, `/${target}/`);
+  for (const p of dropped) console.log(`dropped lock ${p}`);
+  await build(repo);
+
+  git(repo, "add", "-A");
+  try {
+    git(repo, "commit", "-m", flags.message ?? `remove ${target}`);
+  } catch {
+    console.log("nothing to commit");
+  }
+  if (!flags["no-push"]) push(repo);
+  const deployed = !flags["no-deploy"] && deploy(repo, { loud: false, url });
+  console.log(
+    deployed
+      ? `\n${url}/${target}/ is gone. Still in git history if you need it back.`
+      : `\nRemoved locally. Run \`dumpyard deploy\` to take it off the site.`,
+  );
+}
+
 // Copy one template file into the repo, creating its folder.
-function place(repo, rel) {
-  const dest = join(repo, rel);
+function place(repo, r) {
+  const dest = join(repo, r);
   mkdirSync(join(dest, ".."), { recursive: true });
-  cpSync(join(TEMPLATES, rel), dest);
+  cpSync(join(TEMPLATES, r), dest);
 }
 
 // The Worker's name comes from the folder, so two sites don't collide.

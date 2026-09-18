@@ -11,7 +11,9 @@ dumpyard publish report.html                    # public, at /report/
 dumpyard publish ./project-xyz/ --set-password  # whole folder, one password
 dumpyard lock /project-xyz/                     # lock something already here
 dumpyard unlock /project-xyz/
-dumpyard list
+dumpyard remove /project-xyz/                   # unpublish it
+dumpyard list                                   # every lock, with its password
+dumpyard password /project-xyz/                 # look one up
 ```
 
 ## Deploy
