@@ -103,7 +103,7 @@ async function main() {
   }
 
   if (command === "build") return void (await build(repo));
-  if (command === "deploy") return void deploy(repo, { loud: true });
+  if (command === "deploy") return void deploy(repo, { loud: true, url });
 
   if (command === "unlock") {
     await locks.unlock(repo, args[0]);
@@ -155,7 +155,7 @@ async function main() {
     console.log("nothing new to commit");
   }
   const pushed = !flags["no-push"] && push(repo);
-  const deployed = !flags["no-deploy"] && deploy(repo, { loud: false });
+  const deployed = !flags["no-deploy"] && deploy(repo, { loud: false, url });
 
   console.log(`\n${url}/${space}/`);
   if (password) {
@@ -180,16 +180,22 @@ function nameProject(repo) {
   writeFileSync(file, readFileSync(file, "utf8").replace(/"name":\s*"[^"]*"/, `"name": "${name}"`));
 }
 
-function deploy(repo, { loud }) {
+function deploy(repo, { loud, url }) {
   if (!existsSync(join(repo, "wrangler.jsonc"))) return false;
   try {
     const out = execFileSync("npx", ["--yes", "wrangler@latest", "deploy"], {
       cwd: repo,
       encoding: "utf8",
-      stdio: loud ? "inherit" : "pipe",
+      stdio: ["inherit", "pipe", "pipe"],
     });
-    const hit = out && out.match(/https:\/\/\S+\.workers\.dev/);
-    if (hit) console.log(`\nworker: ${hit[0]}`);
+    if (loud) process.stdout.write(out);
+    // You cannot know the workers.dev URL until the first deploy, so learn it
+    // here rather than making the user run init a second time.
+    const live = out.match(/https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev/)?.[0];
+    if (live && live !== url) {
+      saveConfig({ repo, url: live });
+      console.log(`\nsite URL recorded: ${live}`);
+    }
     return true;
   } catch (err) {
     const text = String(err.stderr ?? err.message);

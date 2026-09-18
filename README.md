@@ -5,7 +5,6 @@ behind its own password.
 
 ```sh
 npm install -g dumpyard
-dumpyard init --repo ~/my-site --url https://my-site.pages.dev
 dumpyard publish ./project-xyz/ --set-password
 ```
 
@@ -14,11 +13,53 @@ locked /project-xyz/
 password: m4hmU_WMJvhk
 Shown once — it is stored nowhere and cannot be recovered.
 
-https://my-site.pages.dev/project-xyz/
+https://my-site.you.workers.dev/project-xyz/
 ```
 
 Send someone that link and that password. One password unlocks the whole
 folder — every page, note, PDF and image under it.
+
+## First-time setup
+
+Four commands, no dashboard. You never open the Cloudflare UI, and there is no
+Git integration to configure.
+
+```sh
+npm install -g dumpyard
+npx wrangler login                 # browser OAuth, once per machine
+dumpyard init --repo ~/my-site     # scaffold the repo
+dumpyard deploy                    # first deploy
+```
+
+The last one prints your live URL — `https://<folder-name>.<your-subdomain>.workers.dev`
+— and records it, so `dumpyard publish` can show you the right link from then on.
+The Worker is named after the folder you scaffolded, so two sites never collide.
+
+`wrangler login` stores an OAuth token under `~/Library/Preferences/.wrangler/`
+(macOS) or `~/.config/.wrangler/`. Nothing is written into your repo, and you can
+revoke it from the Cloudflare dashboard at any time. For CI, set a scoped
+`CLOUDFLARE_API_TOKEN` with Workers Scripts:Edit instead — never the Global API
+Key, which cannot be scoped and covers billing and DNS.
+
+### Optional
+
+**Keep history on GitHub.** `init` makes it a git repo but adds no remote. Make
+the repo **private** — the edge password is pointless if the sources are
+world-readable — then:
+
+```sh
+gh repo create <you>/my-site --private --source=. --remote=origin --push
+```
+
+Publishing pushes there too. Deployment does not depend on it.
+
+**Custom domain.** Cloudflare dashboard -> your Worker -> Settings -> Domains &
+Routes. Then `dumpyard init --repo ~/my-site --url https://your-domain` so links
+point at it.
+
+**Don't enable "Protect with Cloudflare Access"** if Cloudflare offers it. That
+is account-level SSO sitting in front of the entire site, public pages included,
+which replaces per-folder passwords rather than complementing them.
 
 ## Why there are no secrets to manage
 
