@@ -4,9 +4,9 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { digest } from "../templates/functions/hash.js";
+import { digest } from "../templates/worker/hash.js";
 
-export const locksPath = (repo) => join(repo, "functions", "locks.js");
+export const locksPath = (repo) => join(repo, "worker", "locks.js");
 
 export async function load(repo) {
   const url = pathToFileURL(locksPath(repo)).href;

@@ -1,0 +1,15 @@
+{
+  "name": "dumpyard",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // The gate lives in the Worker, so the Worker must see every request.
+    // Without this, Cloudflare serves matching assets first and the password
+    // check never runs. This is load-bearing.
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

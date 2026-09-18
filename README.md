@@ -64,18 +64,32 @@ dumpyard init --repo <path>      scaffold a content repo and remember it
 dumpyard upgrade                 refresh the gate and llms.txt from this CLI
 ```
 
-## Setting up the site
+## How the repo is laid out
 
-`dumpyard init` scaffolds a git repo containing your content plus a Cloudflare
-Pages Function that does the gating. Push it to GitHub (private, if you want the
-sources private), then:
+```
+wrangler.jsonc     Cloudflare config
+worker/
+  index.js         the gate — runs before anything is served
+  hash.js
+  locks.js         generated; salted hashes, never passwords
+public/            the ONLY directory Cloudflare uploads
+  index.html       generated
+  <space>/         your content
+```
 
-1. Cloudflare dashboard -> Workers & Pages -> Create -> Pages -> Connect to Git
-2. Framework preset **None**, build command **empty**, output directory `/`
-3. Custom domain, if you have one: Settings -> Custom domains
+The Worker source sits outside `public/`, so `locks.js` can never be fetched.
 
-Cloudflare runs no build. The CLI renders locally and commits the output, so a
-push is the whole deploy.
+### The one line you must not delete
+
+`wrangler.jsonc` contains:
+
+```jsonc
+"run_worker_first": true
+```
+
+Cloudflare serves matching static assets **before** the Worker by default. Without
+this line the gate never runs and every locked page is served to anyone who asks —
+silently, with no error. There is a test asserting it stays true.
 
 ## What this does not do
 

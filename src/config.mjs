@@ -18,7 +18,7 @@ export function loadConfig(overrides = {}) {
   if (!config.repo) {
     throw new Error("no content repo configured — run `dumpyard init --repo <path>` first");
   }
-  if (!existsSync(join(config.repo, "functions", "locks.js"))) {
+  if (!existsSync(join(config.repo, "worker", "locks.js"))) {
     throw new Error(`${config.repo} is not a dumpyard repo — run \`dumpyard init --repo ${config.repo}\``);
   }
   return config;

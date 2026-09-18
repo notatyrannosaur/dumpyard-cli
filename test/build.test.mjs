@@ -16,11 +16,12 @@ function scaffold() {
   cpSync(TEMPLATES, repo, { recursive: true });
   return repo;
 }
+// Content lives under public/ — the only directory Cloudflare ever uploads.
 const write = (repo, rel, text) => {
-  mkdirSync(join(repo, rel, ".."), { recursive: true });
-  writeFileSync(join(repo, rel), text);
+  mkdirSync(join(repo, "public", rel, ".."), { recursive: true });
+  writeFileSync(join(repo, "public", rel), text);
 };
-const read = (repo, rel) => readFileSync(join(repo, rel), "utf8");
+const read = (repo, rel) => readFileSync(join(repo, "public", rel), "utf8");
 
 test("markdown renders, wikilinks resolve, code fences stay literal", async () => {
   const repo = scaffold();
@@ -80,19 +81,19 @@ test("end to end: the generated password opens the gate, and nothing is cached",
   const password = await locks.lock(repo, "/private-xyz/");
   await build(repo, { quiet: true });
 
-  const { onRequest } = await import(
-    `${pathToFileURL(join(repo, "functions", "_middleware.js")).href}?v=${Date.now()}`
-  );
-  const next = async () => new Response("CONTENT", { headers: { "Cache-Control": "public" } });
+  const worker = (
+    await import(`${pathToFileURL(join(repo, "worker", "index.js")).href}?v=${Date.now()}`)
+  ).default;
+  const env = { ASSETS: { fetch: async () => new Response("CONTENT", { headers: { "Cache-Control": "public" } }) } };
   const hit = (path, pw) =>
-    onRequest({
-      request: new Request("https://x.dev" + path, pw
+    worker.fetch(
+      new Request("https://x.dev" + path, pw
         ? { headers: { Authorization: "Basic " + Buffer.from("u:" + pw).toString("base64") } }
         : {}),
-      next,
-    });
+      env,
+    );
 
-  for (const path of ["/private-xyz/", "/private-xyz/brief.html", "/private-xyz/spec.pdf"]) {
+  for (const path of ["/private-xyz/", "/private-xyz/brief", "/private-xyz/spec.pdf"]) {
     assert.equal((await hit(path)).status, 401, `${path} must be gated`);
     assert.equal((await hit(path, "wrong")).status, 401, `${path} must reject a wrong password`);
     const ok = await hit(path, password);

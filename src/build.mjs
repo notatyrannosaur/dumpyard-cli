@@ -11,9 +11,9 @@ import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from "
 import { join, relative, extname, basename, dirname } from "node:path";
 import { render, titleOf } from "./markdown.mjs";
 import { load as loadLocks } from "./locks.mjs";
-import { lockFor } from "../templates/functions/hash.js";
+import { lockFor } from "../templates/worker/hash.js";
 
-const SKIP_DIRS = new Set(["functions", "node_modules", ".git", ".github", ".wrangler"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", ".github", ".wrangler"]);
 const ROOT_FILES = new Set(["index.html", "404.html", "robots.txt", "llms.txt", "README.md"]);
 const IMAGE = /\.(png|jpe?g|gif|svg|webp|avif)$/i;
 const esc = (s) =>
@@ -93,7 +93,10 @@ const kindOf = (rel) =>
 
 export async function build(repo, { quiet = false } = {}) {
   const locks = await loadLocks(repo);
-  const all = walk(repo, repo);
+  // Only ./public is ever uploaded to Cloudflare, so only ./public is content.
+  // The Worker source sits outside it and can never be served.
+  const root = join(repo, "public");
+  const all = walk(root, root);
   const mds = new Set(all.filter((r) => /\.md$/i.test(r)).map((r) => r.replace(/\.md$/i, "")));
 
   // Sources = everything that is not this build's own output.
@@ -114,7 +117,7 @@ export async function build(repo, { quiet = false } = {}) {
     const url = urlOf(rel);
     const stem = basename(rel).replace(/\.(md|html?)$/i, "");
     const title = /\.md$/i.test(rel)
-      ? titleOf(readFileSync(join(repo, rel), "utf8"), stem)
+      ? titleOf(readFileSync(join(root, rel), "utf8"), stem)
       : stem;
     titles.set(rel, title);
     const entry = { url, title };
@@ -128,7 +131,7 @@ export async function build(repo, { quiet = false } = {}) {
   const bodies = new Map();
   let rendered = 0;
   for (const rel of sources.filter((r) => /\.md$/i.test(r))) {
-    const text = readFileSync(join(repo, rel), "utf8");
+    const text = readFileSync(join(root, rel), "utf8");
     // A link may only resolve to a target no more secret than the page holding
     // it. Otherwise a public note would publish a locked page's title and URL.
     const fromLock = lockFor(locks, urlOf(rel))?.prefix ?? null;
@@ -149,7 +152,7 @@ export async function build(repo, { quiet = false } = {}) {
     if (basename(rel).toLowerCase() === "index.md") continue;
     const dir = dirname(rel);
     writeFileSync(
-      join(repo, rel.replace(/\.md$/i, ".html")),
+      join(root, rel.replace(/\.md$/i, ".html")),
       shell({ title: titles.get(rel), body, up: dir === "." ? "/" : `/${dir}/` }),
     );
     rendered++;
@@ -158,9 +161,9 @@ export async function build(repo, { quiet = false } = {}) {
   // One index per directory that holds anything, plus the root.
   const dirs = new Set(sources.map((r) => dirname(r)));
   for (const dir of [...dirs].filter((d) => d !== ".")) {
-    writeIndex(repo, dir, sources, titles, locks, bodies);
+    writeIndex(root, dir, sources, titles, locks, bodies);
   }
-  writeRootIndex(repo, sources, locks);
+  writeRootIndex(root, sources, locks);
 
   if (!quiet) {
     console.log(`built ${rendered} page${rendered === 1 ? "" : "s"}, ${dirs.size} folder index(es)`);
@@ -181,7 +184,7 @@ const visibleIn = (locks, ownPrefix, url) => {
   return lock === null || lock === ownPrefix;
 };
 
-function writeIndex(repo, dir, sources, titles, locks, bodies) {
+function writeIndex(root, dir, sources, titles, locks, bodies) {
   const own = lockFor(locks, `/${dir}/`)?.prefix ?? null;
   const here = sources.filter((r) => dirname(r) === dir);
   const subdirs = [
@@ -211,7 +214,7 @@ function writeIndex(repo, dir, sources, titles, locks, bodies) {
   const intro = custom ? bodies.get(custom) : `<h1>/${esc(dir)}/</h1>`;
 
   writeFileSync(
-    join(repo, dir, "index.html"),
+    join(root, dir, "index.html"),
     shell({
       title: `/${dir}/`,
       body: `${intro}\n<hr>\n<ul>\n${items.join("\n") || "  <li><em>Nothing here yet.</em></li>"}\n</ul>`,
@@ -220,7 +223,7 @@ function writeIndex(repo, dir, sources, titles, locks, bodies) {
   );
 }
 
-function writeRootIndex(repo, sources, locks) {
+function writeRootIndex(root, sources, locks) {
   const spaces = [...new Set(sources.map((r) => r.split(/[\\/]/)[0]).filter((s) => !s.includes(".")))]
     .filter((s) => visibleIn(locks, null, `/${s}/`))
     .sort();
@@ -228,7 +231,7 @@ function writeRootIndex(repo, sources, locks) {
     ? spaces.map((s) => `  <li><a href="/${esc(s)}/">/${esc(s)}/</a></li>`).join("\n")
     : "  <li><em>Nothing public here yet.</em></li>";
   writeFileSync(
-    join(repo, "index.html"),
+    join(root, "index.html"),
     shell({
       title: "dumpyard",
       body:
