@@ -11,6 +11,16 @@ export default {
     const lock = lockFor(LOCKS, new URL(request.url).pathname);
     if (!lock) return env.ASSETS.fetch(request);
 
+    // Checked before the password, so an expired link is dead even to someone
+    // who still has the right password. 410 rather than 404 tells the person
+    // you shared it with what happened, and reveals nothing they didn't have.
+    if (lock.expires && Date.now() >= lock.expires) {
+      return new Response("This link has expired.\n", {
+        status: 410,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
     if (!(await authorized(request, lock))) {
       return new Response("Unauthorized\n", {
         status: 401,

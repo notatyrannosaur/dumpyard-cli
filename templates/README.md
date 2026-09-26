@@ -14,6 +14,8 @@ dumpyard unlock /project-xyz/
 dumpyard remove /project-xyz/                   # unpublish it
 dumpyard list                                   # every lock, with its password
 dumpyard password /project-xyz/                 # look one up
+dumpyard expire /project-xyz/ 7d                # link dies in a week
+dumpyard prune                                  # delete what has expired
 ```
 
 ## Deploy

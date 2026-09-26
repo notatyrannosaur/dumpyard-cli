@@ -30,6 +30,21 @@ without changing it.
 So: give the human the link and the password every time you publish or
 republish something locked. Never tell them a password is unrecoverable.
 
+## Expiry
+
+Only add one when the human gives a time limit ("for the week", "until
+Friday"):
+
+```sh
+dumpyard publish ./draft/ --set-password --expires 7d   # 30m, 12h, 7d, 2w, or 2026-10-01
+dumpyard expire /draft/ 3d        # change it; "never" clears it
+dumpyard prune                    # delete everything that has expired
+```
+
+Expiry only works on locked folders. An expired link returns 410 to everyone,
+even with the right password. Tell the human the expiry when you hand over the
+link.
+
 ## Remove
 
 ```sh

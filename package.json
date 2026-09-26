@@ -2,11 +2,43 @@
   "name": "dumpyard",
   "version": "0.1.0",
   "description": "Publish self-contained pages, notes, PDFs and images to a static site, each path behind its own password.",
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "static-site",
+    "password",
+    "markdown",
+    "wikilinks",
+    "obsidian",
+    "agents",
+    "llm",
+    "cli"
+  ],
+  "homepage": "https://github.com/notatyrannosaur/dumpyard-cli#readme",
+  "bugs": "https://github.com/notatyrannosaur/dumpyard-cli/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/notatyrannosaur/dumpyard-cli.git"
+  },
   "license": "MIT",
+  "author": "notatyrannosaur",
   "type": "module",
-  "bin": { "dumpyard": "bin/dumpyard.mjs" },
-  "files": ["bin", "src", "templates"],
-  "engines": { "node": ">=20" },
-  "scripts": { "test": "node --test test/*.test.mjs" },
-  "dependencies": { "marked": "^15.0.0" }
+  "bin": {
+    "dumpyard": "bin/dumpyard.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "templates",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "DUMPYARD_HOME=\"$(mktemp -d)\" node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "marked": "^15.0.0"
+  }
 }

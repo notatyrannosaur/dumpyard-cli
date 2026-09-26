@@ -1,0 +1,23 @@
+name: test
+
+# The suite includes the assertion that run_worker_first stays true. If that
+# ever flips, every locked page is served without a password and nothing else
+# notices, so it runs on every push and every PR.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test

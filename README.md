@@ -1,5 +1,7 @@
 # dumpyard
 
+[![test](https://github.com/notatyrannosaur/dumpyard-cli/actions/workflows/test.yml/badge.svg)](https://github.com/notatyrannosaur/dumpyard-cli/actions/workflows/test.yml)
+
 Publish pages, notes, PDFs and images to your own static site, with any folder
 behind its own password.
 
@@ -53,9 +55,28 @@ gh repo create <you>/my-site --private --source=. --remote=origin --push
 
 Publishing pushes there too. Deployment does not depend on it.
 
-**Custom domain.** Cloudflare dashboard -> your Worker -> Settings -> Domains &
-Routes. Then `dumpyard init --repo ~/my-site --url https://your-domain` so links
-point at it.
+**Use it from an agent.** The package ships a skill for Claude Code (and anything
+else that reads `SKILL.md`). It covers when to lock, when to set an expiry, and
+what to hand back:
+
+```sh
+mkdir -p ~/.claude/skills/dumpyard
+cp "$(npm root -g)/dumpyard/skills/dumpyard/SKILL.md" ~/.claude/skills/dumpyard/
+```
+
+**Custom domain.** The domain's zone must be on the same Cloudflare account. Add
+it to `wrangler.jsonc` in your content repo:
+
+```jsonc
+"routes": [{ "pattern": "share.example.com", "custom_domain": true }]
+```
+
+Then run `dumpyard deploy` so Cloudflare creates the DNS record and certificate,
+and `dumpyard init --repo ~/my-site --url https://share.example.com` so printed
+links use it. `deploy` never overwrites a custom URL with the `workers.dev` one.
+The site stays reachable at both hosts, gated the same way, unless you also set
+`"workers_dev": false`. *(Written from Cloudflare's docs. It hasn't been run
+against a real domain yet.)*
 
 **Don't enable "Protect with Cloudflare Access"** if Cloudflare offers it. That
 is account-level SSO sitting in front of the entire site, public pages included,
@@ -109,20 +130,48 @@ The trust boundary is the public internet, not your own disk. If that is not
 your threat model — shared machine, untrusted local users — this is the wrong
 tool.
 
+## Expiring links
+
+```sh
+dumpyard publish ./draft/ --set-password --expires 7d
+dumpyard expire /draft/ 2026-10-01      # change it; "never" clears it
+dumpyard prune                          # delete everything that has expired
+```
+
+Once a link expires, every URL under that folder returns `410 Gone`, **even
+with the right password**. The Worker enforces this on each request, so no
+redeploy is needed at the moment of expiry. `prune` then removes the content
+itself. Until you run it, the files stay deployed but can't be reached.
+
+Expiry works only on locked folders. Allowing it on public ones would need a
+rule with no password, and with longest-prefix-wins, that rule could make a
+subfolder of a locked folder public. Rotating a password keeps the existing
+expiry, so re-locking never extends a link's life.
+
 ## Commands
 
 ```
-dumpyard publish <file|dir>...   add content and push
+dumpyard publish <file|dir>...   add content, commit, push and deploy
   --space <name>                 folder to publish into (default: the file's name)
   --set-password                 lock the space with a generated password
   --password <value>             lock it with your own (12+ characters)
-  --no-push                      stage locally, don't push
+  --expires <when>               kill the link later: 30m, 12h, 7d, 2w, or a date
+  --no-push                      don't push to git
+  --no-deploy                    don't deploy to Cloudflare
 
+dumpyard remove <path>           unpublish a folder or page, and deploy
 dumpyard lock <path>             lock an existing path, e.g. /project-xyz/
+  --password <value>
+  --expires <when>
 dumpyard unlock <path>           make it public again
-dumpyard list                    what is locked
+dumpyard expire <path> <when>    change a locked path's expiry, or "never"
+dumpyard prune                   remove everything whose link has expired
+dumpyard list                    every lock, with its password and expiry
+dumpyard password <path>         print one password, nothing else
 dumpyard build                   re-render markdown and regenerate indexes
+dumpyard deploy                  deploy to Cloudflare with wrangler
 dumpyard init --repo <path>      scaffold a content repo and remember it
+  --url <https://...>            the site's public base URL
 dumpyard upgrade                 refresh the gate and llms.txt from this CLI
 ```
 
@@ -157,8 +206,8 @@ silently, with no error. There is a test asserting it stays true.
 
 - **It cannot revoke a link someone already opened.** Changing a password or
   running `remove` stops future access, not a copy already downloaded.
-- **No per-recipient identity, no expiry.** Anyone with the link and password
-  can pass both on. If you need real identity, use Cloudflare Access instead.
+- **No per-recipient identity.** Anyone with the link and password can pass
+  both on until it expires. If you need real identity, use Cloudflare Access.
 - **HTTP Basic has no logout.** Closing the browser is the logout.
 
 Good enough for sharing work with someone you trust. Not a substitute for
