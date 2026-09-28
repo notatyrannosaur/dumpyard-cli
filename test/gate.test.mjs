@@ -5,6 +5,12 @@ import { readFileSync } from "node:fs";
 import worker, { authorized } from "../templates/worker/index.js";
 import { digest, sameDigest, lockFor } from "../templates/worker/hash.js";
 
+// Own store per test file: node --test runs files in parallel processes, and
+// sharing one store let a reader catch another process mid-write.
+process.env.DUMPYARD_HOME = (await import("node:fs")).mkdtempSync(
+  (await import("node:path")).join((await import("node:os")).tmpdir(), "dy-home-"),
+);
+
 const assets = (body = "secret") => ({
   fetch: async () => new Response(body, { headers: { "Cache-Control": "public, max-age=3600" } }),
 });

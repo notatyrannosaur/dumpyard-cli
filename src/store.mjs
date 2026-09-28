@@ -5,7 +5,7 @@
 // passwords are kept. The trust boundary is the public internet, so plaintext on
 // your own disk is deliberate — but it lives in ~/.config, mode 0600, and NEVER
 // inside a content repo, because that would be committed, pushed and deployed.
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, renameSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, relative, isAbsolute } from "node:path";
@@ -22,10 +22,16 @@ export function wouldContainStore(repo) {
 }
 
 const read = (file) => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {});
+// Write to a temp file and rename it into place, so a concurrent reader (a
+// second dumpyard, a parallel test) never sees half a file. Rename is atomic
+// on the same filesystem. Two writers at once can still lose one update, so
+// run one dumpyard command per site at a time.
 function write(file, data) {
   mkdirSync(home(), { recursive: true });
-  writeFileSync(file, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
-  chmodSync(file, 0o600); // tighten it even if the file already existed
+  const tmp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, file);
 }
 
 export function remember(repo, path, password, url) {

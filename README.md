@@ -210,6 +210,8 @@ sits next to it.
   rename the site folder, its locks show as "not stored on this machine". Re-lock
   them, or edit the path in both files. `status` lists stored secrets whose
   folder is gone.
+- **Run one dumpyard command per site at a time.** Two at once can collide in
+  git, or drop a stored password. The files are never left half-written.
 - **Your own disk is inside the trust boundary; the internet is outside it.** If
   that doesn't match your threat model (a shared machine, untrusted local users),
   this is the wrong tool.

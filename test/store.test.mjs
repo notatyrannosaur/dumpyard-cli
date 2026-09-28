@@ -81,3 +81,30 @@ test("a lock with no stored password is reported, not silently blank", async () 
   assert.equal(store.recall(repo, "/elsewhere/"), null);
   assert.ok("/elsewhere/" in (await locks.load(repo)), "the lock itself remains");
 });
+
+test("concurrent writers never leave a half-written store for a reader", async () => {
+  // What broke CI: parallel processes sharing one store. Writes are now
+  // rename-into-place, so any read sees a complete file. (Two simultaneous
+  // writers can still lose one update; that's documented.)
+  const { spawn } = await import("node:child_process");
+  const { readFileSync } = await import("node:fs");
+  const storeUrl = new URL("../src/store.mjs", import.meta.url).href;
+  const writer = (i) =>
+    new Promise((done) => {
+      const code = `const s = await import(${JSON.stringify(storeUrl)}); for (let k = 0; k < 40; k++) s.remember("/tmp/r${i}", "/p" + k + "/", "pw", "u");`;
+      spawn(process.execPath, ["--input-type=module", "-e", code], { env: process.env, stdio: "ignore" }).on("close", done);
+    });
+  const writers = Promise.all(Array.from({ length: 12 }, (_, i) => writer(i)));
+  let reads = 0;
+  const reader = (async () => {
+    for (let n = 0; n < 400; n++) {
+      if (existsSync(store.storePath())) {
+        JSON.parse(readFileSync(store.storePath(), "utf8")); // throws on a torn write
+        reads++;
+      }
+      await new Promise((r) => setImmediate(r));
+    }
+  })();
+  await Promise.all([writers, reader]);
+  assert.ok(reads > 0, "the reader actually overlapped the writers");
+});

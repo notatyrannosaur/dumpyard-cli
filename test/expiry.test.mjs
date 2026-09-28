@@ -8,6 +8,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import * as locks from "../src/locks.mjs";
 import * as store from "../src/store.mjs";
 
+// Own store per test file: node --test runs files in parallel processes, and
+// sharing one store let a reader catch another process mid-write.
+process.env.DUMPYARD_HOME = (await import("node:fs")).mkdtempSync(
+  (await import("node:path")).join((await import("node:os")).tmpdir(), "dy-home-"),
+);
+
 const TEMPLATES = fileURLToPath(new URL("../templates", import.meta.url));
 const scaffold = () => {
   const repo = mkdtempSync(join(tmpdir(), "dumpyard-exp-"));
