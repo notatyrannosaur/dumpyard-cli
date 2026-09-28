@@ -1,0 +1,69 @@
+# dumpyard — instructions for LLMs working in this repo
+
+This repo is a static site of pages, notes, PDFs and images. Any folder can have
+its own password, and locking `/project-xyz/` covers everything inside it.
+
+Use the `dumpyard` CLI for all changes. Don't edit files in this repo by hand.
+If you have the dumpyard skill, follow it; this file covers the same ground.
+
+## Check it works
+
+```sh
+dumpyard status        # repo, URL, what's published. No passwords.
+```
+
+## Publish
+
+Write the artifact outside this repo, then:
+
+```sh
+dumpyard publish report.html --set-password                    # locked, at /report/
+dumpyard publish ./project-xyz/ --set-password --expires 7d    # a folder, with expiry
+dumpyard publish notes.md --space project-xyz                  # into an existing folder
+dumpyard publish ./project-xyz/ --replace                      # clear the folder first
+```
+
+- **Lock by default.** Publish publicly only when the human says it may be
+  public. A mistaken lock is undone with `unlock`; a mistaken public publish
+  can't be undone.
+- **Add `--expires` only when given a time limit.** Accepted forms: `30m`,
+  `12h`, `7d`, `2w`, or a date like `2026-10-01` (UTC). It works only on locked
+  folders.
+- **Check that it's live.** The link works only if the command exits 0 and ends
+  with `Deployed. Live now.` Exit 2 or `NOT DEPLOYED` means nothing is live. Say
+  so; don't hand over the link.
+- **Watch for `updating existing /name/`.** Unless you meant to update that
+  folder, stop and ask. Republishing adds files and keeps the password;
+  `--replace` clears the folder first.
+
+## What ends up where
+
+- One page published without `--space` is served at `/name/`.
+- A folder's own `index.html` is its page and is never overwritten. Without
+  one, the folder gets a generated list of its contents.
+- `foo.md` is rendered to `/folder/foo`. Start every note with `# Heading`.
+  Links: `[[note]]`, `[[note|label]]`, `![[image.png]]`.
+- HTML must be self-contained: inline CSS and JS, no external requests.
+
+## Passwords can be looked up, so never call one unrecoverable
+
+```sh
+dumpyard password /project-xyz/
+```
+
+After every publish, give the human:
+- the URL the command printed
+- the password, if the folder is locked
+- the expiry, if one is set
+- what is public and what is locked
+
+Locked folders aren't listed on the public index, so the URL is the only way in.
+
+## Don't
+
+- Run `remove` or `prune` unless asked. Both take things offline immediately.
+- Link from a public page to a locked one. The build warns when a page does
+  this. Fix it; don't leave it.
+- Put passwords, tokens or keys in any file or commit message. Giving a
+  password to the human in chat is fine.
+- Publish credentials or other people's personal data, even behind a password.

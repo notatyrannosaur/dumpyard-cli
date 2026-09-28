@@ -5,95 +5,106 @@ description: Publish an artifact you made (HTML page, markdown notes, PDF, image
 
 # dumpyard
 
-`dumpyard` is a CLI that publishes files to the user's static site on
-Cloudflare. Any folder can have its own password, and one password covers
-everything under that folder. Run `dumpyard --help` for the full command list.
+`dumpyard` is a CLI that publishes files to the user's own site on Cloudflare.
+Any folder can have its own password, and one password covers everything in
+that folder. `dumpyard --help` lists every command.
 
-## 1. Check it is set up
+## 1. Check it's set up
 
 ```sh
-dumpyard list
+dumpyard status
 ```
 
-If the command is missing or says "no content repo configured", **stop** and
-tell the user to follow the first-time setup at
-https://github.com/notatyrannosaur/dumpyard-cli#first-time-setup. Do not run
-`init` or `wrangler login` yourself. Login opens a browser, and `init` creates
-repos the user should choose.
+This prints the repo, the site URL and what's published, without any
+passwords. **Stop and tell the user** if:
+
+- the command isn't found, or
+- it says "no content repo configured", or
+- it says the site is "not deployed yet".
+
+Point them to https://github.com/notatyrannosaur/dumpyard-cli#first-time-setup.
+Don't run `init`, `deploy` or `wrangler login` yourself: signing in opens a
+browser, and setup creates things the user should choose.
 
 ## 2. Make the artifact
 
-Write it somewhere outside the content repo, such as a temp folder, then
-publish it from there.
+Write it outside the site repo (a temp folder is fine) and publish from there.
 
-- **HTML**: one self-contained file. Inline CSS and JS, no frameworks, no
-  external requests.
+- **HTML**: one self-contained file with inline CSS and JS, no frameworks, no
+  external requests. For a multi-file app, a folder whose `index.html` is the
+  entry point. dumpyard never overwrites a file you wrote.
 - **Markdown**: start every note with `# Heading`, which becomes its title.
   Link notes with `[[note]]` or `[[note|label]]`, and embed images with
   `![[diagram.png]]`.
 - **Images and PDFs**: put them next to the pages that use them.
-- **Several related files**: put them in one folder and publish the folder.
 
 ## 3. Publish
 
 ```sh
+dumpyard publish report.html --set-password                   # -> /report/
 dumpyard publish ./artifact/ --space <kebab-name> --set-password
-dumpyard publish report.html --space <kebab-name> --set-password --expires 7d
-dumpyard publish page.html --space <kebab-name>              # public
+dumpyard publish ./artifact/ --space <kebab-name> --set-password --expires 7d
 ```
 
-This one command builds, commits, pushes and deploys. The link is live when it
-finishes.
-
-**Lock it unless the user said it can be public.** Locking something that
-should be public is fixed with one `unlock`. Publishing something that should
-be private cannot be undone, because anyone may already have fetched it.
+**Lock it unless the user said it may be public.** A mistaken lock is fixed
+with one `unlock`. A mistaken public publish can't be undone, because anyone may
+already have a copy.
 
 **Add `--expires` only when the user gives a time limit**, such as "for the
 week", "temporarily" or "until Friday". Accepted values: `30m`, `12h`, `7d`,
-`2w`, or a date like `2026-10-01` (UTC). Expiry only works on locked folders.
+`2w`, or a date like `2026-10-01` (UTC). Expiry works only on locked folders.
 
-**Choose a new space name** unless the user wants to update an existing
-publication. `publish` prints `updating existing /name/` when the folder
-already exists. If you did not intend that, stop and ask. Republishing to the
-same space keeps its password.
+**Pick a new space name** unless you're updating an existing publication. If
+the output says `updating existing /name/` and you didn't intend that, stop and
+ask. Republishing adds files and keeps the password. `--replace` clears the
+folder first.
+
+**Check that it's live before handing anything over.** It is live only if the
+command exits 0 and its last line is `Deployed. Live now.`
+
+- Exit 2 or `NOT DEPLOYED`: nothing is live. Tell the user what failed, and
+  don't give them the link as if it works.
+- A build warning that a page links into a locked path: that URL is now visible
+  to anyone who can read the page. Fix it, or tell the user.
 
 ## 4. Hand it over
 
-Every time you publish, give the user:
+Give the user:
 
-- the URL the command printed
-- the password, if the folder is locked. Any username works at the prompt.
-- the expiry, if one is set
-- what is public and what is locked
+- the URL the command printed. It's the page itself when you published one file
+  into a named space, otherwise the folder.
+- the password, if it's locked. Any username works at the prompt.
+- the expiry, if one is set.
+- what's public and what's locked.
 
-Passwords can always be looked up again, so you never need to warn that one is
-unrecoverable:
-
-```sh
-dumpyard password /<space>/     # one password
-dumpyard list                   # every lock, with password and expiry
-```
-
-Locked folders do not appear on the site's public index, so the URL is the
-only way in.
-
-## Changing things later
+Passwords can always be looked up again, so never say one is unrecoverable:
 
 ```sh
-dumpyard expire /<space>/ 3d        # set or change expiry ("never" clears it)
-dumpyard lock /<space>/             # add a password, or rotate an existing one
-dumpyard unlock /<space>/           # make it public
-dumpyard remove /<space>/           # take it off the site
-dumpyard prune                      # remove everything that has expired
+dumpyard password /<space>/
 ```
 
-Run `remove` and `prune` only when the user asks. Content stays in git
-history, but the live link is gone as soon as the command finishes.
+Use `dumpyard list` only when the user asks for all their passwords, because it
+prints every one of them.
+
+Locked folders don't appear on the site's public index, so the URL is the only
+way in.
+
+## Later
+
+```sh
+dumpyard expire /<space>/ 3d     # set or change expiry; "never" clears it
+dumpyard lock /<space>/          # add a password, or rotate one
+dumpyard unlock /<space>/        # make it public
+dumpyard remove /<space>/        # take it off the site
+dumpyard prune                   # remove everything that has expired
+```
+
+Each of these deploys, so apply the same live check. Run `remove` and `prune`
+only when the user asks; both take things offline immediately.
 
 ## Never
 
-- Edit files inside the content repo by hand. Use the CLI.
+- Edit files in the site repo by hand. Use the CLI.
 - Put a password in a file, a commit message or a published page. Giving it to
   the user in chat is fine.
 - Publish credentials, private keys or other people's personal data, even

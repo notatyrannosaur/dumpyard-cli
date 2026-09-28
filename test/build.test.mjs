@@ -30,7 +30,7 @@ test("markdown renders, wikilinks resolve, code fences stay literal", async () =
   await build(repo, { quiet: true });
 
   const html = read(repo, "notes/one.html");
-  // Pages serves two.html at /notes/two and 308s the .html form, so links
+  // Cloudflare serves two.html at /notes/two and redirects the .html form, so links
   // must already be in the canonical extensionless shape.
   assert.match(html, /<a href="\/notes\/two">Two<\/a>/);
   assert.match(html, /<a href="\/notes\/two">other<\/a>/);
@@ -57,12 +57,15 @@ test("a public page cannot link into a locked folder", async () => {
   write(repo, "open/note.md", "# Open\n\nLinks to [[brief]].\n");
   write(repo, "private-xyz/brief.md", "# The Confidential Brief\n");
   await locks.lock(repo, "/private-xyz/");
-  const { broken } = await build(repo, { quiet: true });
+  const { warnings } = await build(repo, { quiet: true });
 
   const html = read(repo, "open/note.html");
   assert.doesNotMatch(html, /private-xyz/, "locked URL leaked onto a public page");
   assert.doesNotMatch(html, /Confidential/, "locked title leaked onto a public page");
-  assert.ok(broken.some((b) => b.target === "brief" && b.hidden), "should report it as hidden");
+  assert.ok(
+    warnings.some((w) => w.from === "open/note.md" && /locked folder/.test(w.message)),
+    "should report the hidden link",
+  );
 });
 
 test("inside the same lock, links resolve normally", async () => {

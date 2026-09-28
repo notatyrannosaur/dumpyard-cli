@@ -1,23 +1,30 @@
-// Walk the content repo, render markdown, regenerate every index.
+// Walk public/, render markdown, regenerate indexes, clean up after itself.
 //
-// Conventions, so a rebuild never mistakes its own output for a source:
-//   foo.md          -> foo.html          (foo.html is generated, never a source)
-//   index.html      -> always generated; write index.md to control a folder's page
-//   anything else   -> served as-is (PDFs, images, hand-written .html)
+// Every file this build writes carries GENERATOR, and the build only ever
+// overwrites or deletes files that carry it. So:
+//   foo.md       -> foo.html, unless you wrote a foo.html yourself (yours wins)
+//   index.html   -> generated listing, unless you wrote one yourself (yours wins)
+//   index.md     -> becomes the folder's page, with the listing below it
+//   anything else is served as-is (PDFs, images, hand-written HTML)
 //
 // A listing shows an entry only if that entry is no more secret than the page
-// listing it, so a public index never leaks the name of a locked page.
-import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
-import { join, relative, extname, basename, dirname } from "node:path";
+// listing it, so a public index never names a locked page. Links from a page
+// into something more secret are dropped (wikilinks) or warned about (plain).
+import { readdirSync, readFileSync, writeFileSync, existsSync, rmSync, rmdirSync } from "node:fs";
+import { join, relative, basename, dirname } from "node:path";
 import { render, titleOf } from "./markdown.mjs";
 import { load as loadLocks } from "./locks.mjs";
 import { lockFor } from "../templates/worker/hash.js";
 
-const SKIP_DIRS = new Set(["node_modules", ".git", ".github", ".wrangler"]);
-const ROOT_FILES = new Set(["index.html", "404.html", "robots.txt", "llms.txt", "README.md"]);
+const GENERATOR = '<meta name="generator" content="dumpyard">';
+// Sites built before the marker existed are recognised by their footer.
+const GENERATED = /<meta name="generator" content="dumpyard">|<footer>Built by dumpyard\.<\/footer>/;
+const ROOT_FILES = new Set(["index.html", "404.html", "robots.txt"]);
 const IMAGE = /\.(png|jpe?g|gif|svg|webp|avif)$/i;
 const esc = (s) =>
   String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+// Percent-encode each segment, so "My Report.pdf" makes a working link.
+const href = (url) => url.split("/").map(encodeURIComponent).join("/");
 
 const STYLE = `
   html { color-scheme: light dark;
@@ -50,155 +57,199 @@ const shell = ({ title, body, up }) => `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+${GENERATOR}
 <title>${esc(title)}</title>
 <style>${STYLE}
 </style>
 </head>
 <body>
-${up ? `<p class="meta"><a href="${esc(up)}">&larr; up</a></p>\n` : ""}${body}
+${up ? `<p class="meta"><a href="${esc(href(up))}">&larr; up</a></p>\n` : ""}${body}
 <footer>Built by dumpyard.</footer>
 </body>
 </html>
 `;
 
-function walk(dir, repo, out = []) {
+function walk(dir, root, out = []) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (e.name.startsWith(".")) continue;
     const full = join(dir, e.name);
-    const rel = relative(repo, full);
-    if (e.isDirectory()) {
-      if (SKIP_DIRS.has(rel)) continue;
-      walk(full, repo, out);
-    } else if (!(dirname(rel) === "." && ROOT_FILES.has(e.name))) {
-      out.push(rel);
-    }
+    const rel = relative(root, full).split("\\").join("/");
+    if (e.isDirectory()) walk(full, root, out);
+    else if (!(!rel.includes("/") && ROOT_FILES.has(e.name))) out.push(rel);
   }
   return out;
 }
 
-// Cloudflare Pages serves foo.html at /foo and 308-redirects the .html form,
-// so links point at the canonical extensionless URL and skip the round trip.
-const urlOf = (rel) => {
-  const p = "/" + rel.split(/[\\/]/).join("/");
-  return p.replace(/\/index\.(md|html?)$/i, "/").replace(/\.(md|html?)$/i, "");
+// The URL a source is served at. Cloudflare serves foo.html at /foo (and
+// redirects the .html form), so link there directly. Only a lowercase .html is
+// stripped: an uppercase .HTML isn't served extensionless, so it keeps its name.
+export const urlOf = (rel) => {
+  const p = "/" + rel.replace(/\.md$/i, ".html");
+  return p.replace(/\/index\.html$/, "/").replace(/\.html$/, "");
 };
+const isPage = (rel) => /\.(md|html?)$/i.test(rel);
 const kindOf = (rel) =>
-  /\.md$/i.test(rel) || /\.html?$/i.test(rel)
-    ? "page"
-    : IMAGE.test(rel)
-      ? "image"
-      : /\.pdf$/i.test(rel)
-        ? "pdf"
-        : "file";
+  isPage(rel) ? "page" : IMAGE.test(rel) ? "image" : /\.pdf$/i.test(rel) ? "pdf" : "file";
+const isGenerated = (file) => existsSync(file) && GENERATED.test(readFileSync(file, "utf8"));
+const TITLE = /<title>(.*?)<\/title>/is;
 
-export async function build(repo, { quiet = false } = {}) {
-  const locks = await loadLocks(repo);
-  // Only ./public is ever uploaded to Cloudflare, so only ./public is content.
-  // The Worker source sits outside it and can never be served.
-  const root = join(repo, "public");
-  const all = walk(root, root);
-  const mds = new Set(all.filter((r) => /\.md$/i.test(r)).map((r) => r.replace(/\.md$/i, "")));
-
-  // Sources = everything that is not this build's own output.
-  const sources = all.filter((rel) => {
-    if (basename(rel).toLowerCase() === "index.html") return false;
-    if (/\.html$/i.test(rel) && mds.has(rel.replace(/\.html$/i, ""))) return false;
-    return true;
-  });
-
-  // Wikilink index: bare name, and "folder/name" to disambiguate duplicates.
-  const index = new Map();
-  const add = (key, value) => {
-    const k = key.toLowerCase();
-    if (!index.has(k)) index.set(k, value);
-  };
-  const titles = new Map();
-  for (const rel of sources) {
-    const url = urlOf(rel);
-    const stem = basename(rel).replace(/\.(md|html?)$/i, "");
-    const title = /\.md$/i.test(rel)
-      ? titleOf(readFileSync(join(root, rel), "utf8"), stem)
-      : stem;
-    titles.set(rel, title);
-    const entry = { url, title };
-    add(stem, entry);
-    add(basename(rel), entry);
-    add(`${dirname(rel).split(/[\\/]/).pop()}/${stem}`, entry);
-    add(rel.replace(/\\/g, "/"), entry);
-  }
-
-  const broken = [];
-  const bodies = new Map();
-  let rendered = 0;
-  for (const rel of sources.filter((r) => /\.md$/i.test(r))) {
-    const text = readFileSync(join(root, rel), "utf8");
-    // A link may only resolve to a target no more secret than the page holding
-    // it. Otherwise a public note would publish a locked page's title and URL.
-    const fromLock = lockFor(locks, urlOf(rel))?.prefix ?? null;
-    let lastHidden = null;
-    const resolve = (t) => {
-      const hit = index.get(t.toLowerCase());
-      if (!hit) return null;
-      if (visibleIn(locks, fromLock, hit.url)) return hit;
-      lastHidden = t;
-      return null;
-    };
-    const body = render(text, resolve, (t) => {
-      broken.push({ from: rel, target: t, hidden: lastHidden === t });
-      lastHidden = null;
-    });
-    bodies.set(rel, body);
-    // index.md is the folder's own page; writeIndex composes it with the listing.
-    if (basename(rel).toLowerCase() === "index.md") continue;
-    const dir = dirname(rel);
-    writeFileSync(
-      join(root, rel.replace(/\.md$/i, ".html")),
-      shell({ title: titles.get(rel), body, up: dir === "." ? "/" : `/${dir}/` }),
-    );
-    rendered++;
-  }
-
-  // One index per directory that holds anything, plus the root.
-  const dirs = new Set(sources.map((r) => dirname(r)));
-  for (const dir of [...dirs].filter((d) => d !== ".")) {
-    writeIndex(root, dir, sources, titles, locks, bodies);
-  }
-  writeRootIndex(root, sources, locks);
-
-  if (!quiet) {
-    console.log(`built ${rendered} page${rendered === 1 ? "" : "s"}, ${dirs.size} folder index(es)`);
-    for (const b of broken) {
-      console.warn(
-        b.hidden
-          ? `  warn: ${b.from} links to [[${b.target}]], which is locked and not visible from there — left unlinked`
-          : `  warn: ${b.from} links to [[${b.target}]], which does not resolve`,
-      );
-    }
-  }
-  return { rendered, broken };
-}
-
-// An entry is listed only if it is no more secret than the page listing it.
+// An entry is shown only if it is no more secret than the page showing it.
 const visibleIn = (locks, ownPrefix, url) => {
   const lock = lockFor(locks, url)?.prefix ?? null;
   return lock === null || lock === ownPrefix;
 };
 
-function writeIndex(root, dir, sources, titles, locks, bodies) {
+export async function build(repo, { quiet = false } = {}) {
+  const locks = await loadLocks(repo);
+  // Only ./public is uploaded to Cloudflare, so only ./public is content.
+  const root = join(repo, "public");
+  const at = (rel) => join(root, rel);
+  const all = walk(root, root);
+  const warnings = [];
+  const warn = (from, message) => warnings.push({ from, message });
+
+  // Split what's here into your files (sources) and this build's old output.
+  const mds = new Set(all.filter((r) => /\.md$/i.test(r)).map((r) => r.replace(/\.md$/i, "")));
+  const ownHtml = new Set(); // hand-written .html that shadows a .md or the listing
+  const sources = [];
+  for (const rel of all) {
+    if (/\.html$/i.test(rel) && isGenerated(at(rel))) continue; // old output
+    if (/\.html$/i.test(rel) && mds.has(rel.replace(/\.html$/i, ""))) ownHtml.add(rel);
+    sources.push(rel);
+  }
+  // A .md whose .html you wrote by hand is not rendered — yours wins.
+  const renderable = sources.filter((r) => {
+    if (!/\.md$/i.test(r)) return false;
+    const out = r.replace(/\.md$/i, ".html");
+    if (basename(r).toLowerCase() === "index.md") {
+      if (sources.includes(join(dirname(r), "index.html").replace(/^\.\//, ""))) {
+        warn(r, `ignored: ${out} is your own file, so it is the folder page`);
+        return false;
+      }
+      return true;
+    }
+    if (ownHtml.has(out)) {
+      warn(r, `not rendered: ${out} is your own file and would be overwritten`);
+      return false;
+    }
+    return true;
+  });
+  const served = sources.filter((r) => !(/\.md$/i.test(r) && !renderable.includes(r)));
+
+  // Titles, and the wikilink index: bare name, filename, and "folder/name".
+  const titles = new Map();
+  const index = new Map();
+  const add = (key, value) => index.has(key.toLowerCase()) || index.set(key.toLowerCase(), value);
+  for (const rel of served) {
+    const stem = basename(rel).replace(/\.(md|html?)$/i, "");
+    let title = stem;
+    if (/\.md$/i.test(rel)) title = titleOf(readFileSync(at(rel), "utf8"), stem);
+    else if (/\.html?$/i.test(rel)) title = TITLE.exec(readFileSync(at(rel), "utf8"))?.[1]?.trim() || stem;
+    titles.set(rel, title);
+    const entry = { url: urlOf(rel), title };
+    add(stem, entry);
+    add(basename(rel), entry);
+    add(`${dirname(rel).split("/").pop()}/${stem}`, entry);
+    add(rel, entry);
+  }
+
+  const outputs = new Set(["index.html"]);
+  const bodies = new Map();
+  for (const rel of renderable) {
+    const text = readFileSync(at(rel), "utf8");
+    const fromLock = lockFor(locks, urlOf(rel))?.prefix ?? null;
+    let hidden = null;
+    const resolve = (t) => {
+      const hit = index.get(t.toLowerCase());
+      if (!hit) return null;
+      if (visibleIn(locks, fromLock, hit.url)) return { ...hit, url: href(hit.url) };
+      hidden = t;
+      return null;
+    };
+    const body = render(text, resolve, (t) => {
+      warn(
+        rel,
+        hidden === t
+          ? `[[${t}]] points into a locked folder, so it was left unlinked`
+          : `[[${t}]] does not resolve`,
+      );
+      hidden = null;
+    });
+    bodies.set(rel, body);
+    if (basename(rel).toLowerCase() === "index.md") continue; // folded into the listing
+    const out = rel.replace(/\.md$/i, ".html");
+    const dir = dirname(rel);
+    writeFileSync(at(out), shell({ title: titles.get(rel), body, up: dir === "." ? "/" : `/${dir}/` }));
+    outputs.add(out);
+  }
+
+  // Plain links can point into a locked folder too. Rewriting arbitrary HTML
+  // is guesswork, so these are flagged loudly instead.
+  for (const rel of served.filter(isPage)) {
+    const page = urlOf(rel);
+    const fromLock = lockFor(locks, page)?.prefix ?? null;
+    const html = /\.md$/i.test(rel) ? (bodies.get(rel) ?? "") : readFileSync(at(rel), "utf8");
+    for (const [, link] of html.matchAll(/(?:href|src)\s*=\s*["']([^"'#?]+)/gi)) {
+      let target;
+      try {
+        const u = new URL(link, `https://site.invalid${page}`);
+        if (u.host !== "site.invalid") continue; // off-site
+        target = u.pathname;
+      } catch {
+        continue;
+      }
+      if (!visibleIn(locks, fromLock, target)) {
+        warn(rel, `links to ${target}, which is locked — that URL is visible to anyone reading this page`);
+      }
+    }
+  }
+
+  // One listing per folder that has content, unless you wrote its index.html.
+  const dirs = new Set();
+  for (const r of served) for (let d = dirname(r); d !== "."; d = dirname(d)) dirs.add(d);
+  for (const dir of dirs) {
+    if (served.includes(`${dir}/index.html`)) continue; // yours
+    writeIndex(root, dir, served, titles, locks, bodies);
+    outputs.add(`${dir}/index.html`);
+  }
+  writeRootIndex(root, served, locks);
+
+  // Delete this build's leftovers: generated files nothing produces any more,
+  // then any folder that is now empty. Your files are never touched.
+  let cleaned = 0;
+  for (const rel of all) {
+    if (/\.html$/i.test(rel) && !outputs.has(rel) && isGenerated(at(rel))) {
+      rmSync(at(rel));
+      cleaned++;
+    }
+  }
+  pruneEmpty(root, root);
+
+  if (!quiet) {
+    console.log(`built ${bodies.size} note(s), ${dirs.size} folder(s)${cleaned ? `, cleaned ${cleaned} stale file(s)` : ""}`);
+    for (const w of warnings) console.warn(`  warn: ${w.from}: ${w.message}`);
+  }
+  return { warnings, broken: warnings };
+}
+
+function pruneEmpty(dir, root) {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) pruneEmpty(join(dir, e.name), root);
+  }
+  if (dir !== root && readdirSync(dir).length === 0) rmdirSync(dir);
+}
+
+function writeIndex(root, dir, served, titles, locks, bodies) {
   const own = lockFor(locks, `/${dir}/`)?.prefix ?? null;
-  const here = sources.filter((r) => dirname(r) === dir);
+  const here = served.filter((r) => dirname(r) === dir);
   const subdirs = [
-    ...new Set(
-      sources
-        .filter((r) => r.startsWith(dir + "/") && dirname(r) !== dir)
-        .map((r) => relative(dir, r).split(/[\\/]/)[0]),
-    ),
+    ...new Set(served.filter((r) => r.startsWith(dir + "/") && dirname(r) !== dir).map((r) => r.slice(dir.length + 1).split("/")[0])),
   ].sort();
 
   const items = [
     ...subdirs
       .filter((d) => visibleIn(locks, own, `/${dir}/${d}/`))
-      .map((d) => `  <li><a href="/${esc(dir)}/${esc(d)}/">${esc(d)}/</a></li>`),
+      .map((d) => `  <li><a href="${esc(href(`/${dir}/${d}/`))}">${esc(d)}/</a></li>`),
     ...here
       .filter((r) => basename(r).toLowerCase() !== "index.md")
       .filter((r) => visibleIn(locks, own, urlOf(r)))
@@ -206,13 +257,12 @@ function writeIndex(root, dir, sources, titles, locks, bodies) {
       .map((r) => {
         const kind = kindOf(r);
         const label = kind === "page" ? "" : ` <span class="type">${kind}</span>`;
-        return `  <li><a href="${esc(urlOf(r))}">${esc(titles.get(r))}</a>${label}</li>`;
+        return `  <li><a href="${esc(href(urlOf(r)))}">${esc(titles.get(r))}</a>${label}</li>`;
       }),
   ];
 
   const custom = here.find((r) => basename(r).toLowerCase() === "index.md");
-  const intro = custom ? bodies.get(custom) : `<h1>/${esc(dir)}/</h1>`;
-
+  const intro = custom && bodies.has(custom) ? bodies.get(custom) : `<h1>/${esc(dir)}/</h1>`;
   writeFileSync(
     join(root, dir, "index.html"),
     shell({
@@ -223,12 +273,12 @@ function writeIndex(root, dir, sources, titles, locks, bodies) {
   );
 }
 
-function writeRootIndex(root, sources, locks) {
-  const spaces = [...new Set(sources.map((r) => r.split(/[\\/]/)[0]).filter((s) => !s.includes(".")))]
+function writeRootIndex(root, served, locks) {
+  const spaces = [...new Set(served.filter((r) => r.includes("/")).map((r) => r.split("/")[0]))]
     .filter((s) => visibleIn(locks, null, `/${s}/`))
     .sort();
   const items = spaces.length
-    ? spaces.map((s) => `  <li><a href="/${esc(s)}/">/${esc(s)}/</a></li>`).join("\n")
+    ? spaces.map((s) => `  <li><a href="${esc(href(`/${s}/`))}">/${esc(s)}/</a></li>`).join("\n")
     : "  <li><em>Nothing public here yet.</em></li>";
   writeFileSync(
     join(root, "index.html"),

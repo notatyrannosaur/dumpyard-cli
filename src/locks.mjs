@@ -1,5 +1,5 @@
-// Read/write <repo>/functions/locks.js. The salted hashes live in the content
-// repo; the passwords are never stored anywhere.
+// Read/write <repo>/worker/locks.js, the salted hashes the gate checks. The
+// passwords themselves live in the local store (store.mjs), never in the repo.
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -79,6 +79,11 @@ export function parseWhen(when, now = Date.now()) {
   if (rel) {
     const unit = { m: 60e3, h: 3600e3, d: 86400e3, w: 604800e3 }[rel[2]];
     return now + Number(rel[1]) * unit;
+  }
+  // Only full dates count as absolute. Date.parse("7") is the year 2001, which
+  // turned a forgotten unit into a baffling "already in the past".
+  if (!/^\d{4}-\d{2}-\d{2}/.test(String(when))) {
+    throw new Error(`can't read "${when}" as an expiry — use 30m, 12h, 7d, 2w, a date like 2026-10-01, or never`);
   }
   const at = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(when) ? `${when}T00:00:00Z` : when);
   if (Number.isNaN(at)) {

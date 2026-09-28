@@ -1,0 +1,4 @@
+# wrangler writes its local cache and dev state here
+.wrangler/
+node_modules/
+.DS_Store
