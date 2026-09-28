@@ -19,7 +19,7 @@ Write the artifact outside this repo, then:
 ```sh
 dumpyard publish report.html --set-password                    # locked, at /report/
 dumpyard publish ./project-xyz/ --set-password --expires 7d    # a folder, with expiry
-dumpyard publish notes.md --space project-xyz                  # into an existing folder
+dumpyard publish notes.md --space project-xyz --update         # add to an existing folder
 dumpyard publish ./project-xyz/ --replace                      # clear the folder first
 ```
 
@@ -32,9 +32,13 @@ dumpyard publish ./project-xyz/ --replace                      # clear the folde
 - **Check that it's live.** The link works only if the command exits 0 and ends
   with `Deployed. Live now.` Exit 2 or `NOT DEPLOYED` means nothing is live. Say
   so; don't hand over the link.
-- **Watch for `updating existing /name/`.** Unless you meant to update that
-  folder, stop and ask. Republishing adds files and keeps the password;
-  `--replace` clears the folder first.
+- **An existing folder is refused** unless you pass `--update` or `--replace`.
+  If you get `already exists`, ask the human which they mean; don't choose.
+- **Updating keeps the password.** `--set-password` on a locked folder leaves
+  its password alone. `dumpyard lock` on a locked folder rotates it (prints
+  `ROTATED`), so run it only when asked.
+- **Only folders can be locked.** Put a page that needs its own password into a
+  folder of its own.
 
 ## What ends up where
 
@@ -45,7 +49,7 @@ dumpyard publish ./project-xyz/ --replace                      # clear the folde
   Links: `[[note]]`, `[[note|label]]`, `![[image.png]]`.
 - HTML must be self-contained: inline CSS and JS, no external requests.
 
-## Passwords can be looked up, so never call one unrecoverable
+## Passwords are three words, and can be looked up, so never call one unrecoverable
 
 ```sh
 dumpyard password /project-xyz/

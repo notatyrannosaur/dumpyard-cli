@@ -1,14 +1,24 @@
 // Shared by the gate (worker/index.js) and the CLI that writes locks.js, so the
 // verifier and the generator can never drift apart.
 //
-// A single fast SHA-256 is safe here only because the CLI generates 72-bit
-// random passwords, so there is nothing to brute-force. Hand-picked passwords
-// are held to 12+ characters for the same reason. Real key stretching (PBKDF2
-// at 100k+ iterations) does not fit the Workers free plan's 10 ms CPU budget.
-export async function digest(salt, password) {
-  const bytes = new TextEncoder().encode(`${salt}:${password}`);
-  const buf = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+// Each hash is HMAC-SHA256(pepper, salt:password). The pepper is one random
+// 256-bit secret per site: it lives in Cloudflare as the DUMPYARD_PEPPER secret
+// (write-only) and in the owner's ~/.config/dumpyard, never in the repo. So a
+// leaked repo gives an attacker nothing to crack, even though generated
+// passwords are only three words (~39 bits) and HMAC is fast. Key stretching
+// would be the usual answer, but it doesn't fit the Workers free plan's 10 ms
+// CPU budget; a pepper costs one HMAC.
+const keys = new Map();
+const bytes = (hex) => new Uint8Array(hex.match(/../g).map((b) => parseInt(b, 16)));
+const toHex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+export async function digest(salt, password, pepper) {
+  if (!/^[0-9a-f]{64}$/.test(pepper ?? "")) throw new Error("digest needs the site's 256-bit hex pepper");
+  if (!keys.has(pepper)) {
+    keys.set(pepper, crypto.subtle.importKey("raw", bytes(pepper), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]));
+  }
+  const mac = await crypto.subtle.sign("HMAC", await keys.get(pepper), new TextEncoder().encode(`${salt}:${password}`));
+  return toHex(mac);
 }
 
 // Equal-length hex digests, so this leaks neither length nor prefix.

@@ -84,8 +84,10 @@ test("a single file into a named space prints the file's own URL", () => {
 test("republishing merges; --replace clears first", () => {
   const s = site();
   s.run(["publish", folder({ "a.md": "# A\n", "b.md": "# B\n" }), "--space", "p", ...s.ship]);
-  const merged = s.run(["publish", folder({ "a.md": "# A2\n" }), "--space", "p", ...s.ship]);
-  assert.match(merged.out, /updating existing \/p\//);
+  const refused = s.run(["publish", folder({ "a.md": "# A2\n" }), "--space", "p", ...s.ship]);
+  assert.equal(refused.code, 1, "an existing space is never overwritten by accident");
+  assert.match(refused.out, /already exists\. Add --update/);
+  assert.equal(s.run(["publish", folder({ "a.md": "# A2\n" }), "--space", "p", "--update", ...s.ship]).code, 0);
   assert.ok(existsSync(s.pub("p/b.md")), "merge keeps b");
   s.run(["publish", folder({ "a.md": "# A3\n" }), "--space", "p", "--replace", ...s.ship]);
   assert.ok(!existsSync(s.pub("p/b.md")) && !existsSync(s.pub("p/b.html")), "replace removes b and its output");

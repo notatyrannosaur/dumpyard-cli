@@ -21,7 +21,15 @@ export default {
       });
     }
 
-    if (!(await authorized(request, lock))) {
+    // Without its pepper the Worker can't check any password. Fail closed.
+    if (!env.DUMPYARD_PEPPER) {
+      return new Response("This site is missing its DUMPYARD_PEPPER secret. Run `dumpyard deploy`.\n", {
+        status: 503,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
+    if (!(await authorized(request, lock, env.DUMPYARD_PEPPER))) {
       return new Response("Unauthorized\n", {
         status: 401,
         headers: {
@@ -42,7 +50,7 @@ export default {
 };
 
 // Any username is accepted; only the password is checked.
-export async function authorized(request, lock) {
+export async function authorized(request, lock, pepper) {
   const header = request.headers.get("Authorization") || "";
   if (!header.startsWith("Basic ")) return false;
   let supplied;
@@ -52,5 +60,5 @@ export async function authorized(request, lock) {
   } catch {
     return false; // malformed base64
   }
-  return sameDigest(await digest(lock.salt, supplied), lock.hash);
+  return sameDigest(await digest(lock.salt, supplied, pepper), lock.hash);
 }

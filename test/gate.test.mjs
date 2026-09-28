@@ -11,9 +11,10 @@ const assets = (body = "secret") => ({
 const basic = (u, p) => "Basic " + Buffer.from(`${u}:${p}`).toString("base64");
 const req = (path, auth) =>
   new Request("https://x.dev" + path, auth ? { headers: { Authorization: auth } } : {});
+const PEPPER = "ab".repeat(32);
 const fixture = async (password) => {
   const salt = "00112233445566778899aabbccddeeff";
-  return { prefix: "/p/", salt, hash: await digest(salt, password) };
+  return { prefix: "/p/", salt, hash: await digest(salt, password, PEPPER) };
 };
 
 test("wrangler config runs the Worker BEFORE static assets", () => {
@@ -45,19 +46,20 @@ test("one lock covers every file type beneath it", () => {
 });
 
 test("sameDigest rejects length and single-bit changes", async () => {
-  const a = await digest("s", "pw");
-  assert.ok(sameDigest(a, await digest("s", "pw")));
-  assert.ok(!sameDigest(a, await digest("s", "pX")));
+  const a = await digest("s", "pw", PEPPER);
+  assert.ok(sameDigest(a, await digest("s", "pw", PEPPER)));
+  assert.ok(!sameDigest(a, await digest("s", "pX", PEPPER)));
+  assert.ok(!sameDigest(a, await digest("s", "pw", "cd".repeat(32))), "a different pepper, a different hash");
   assert.ok(!sameDigest(a, a.slice(0, -1)));
 });
 
 test("authorized: only the right password passes", async () => {
   const lock = await fixture("correct horse");
-  assert.ok(await authorized(req("/", basic("anyone", "correct horse")), lock));
-  assert.ok(!(await authorized(req("/", basic("anyone", "wrong")), lock)));
-  assert.ok(!(await authorized(req("/"), lock)));
-  assert.ok(!(await authorized(req("/", "Basic !!!not-base64"), lock)));
-  assert.ok(!(await authorized(req("/", "Bearer tok"), lock)));
+  assert.ok(await authorized(req("/", basic("anyone", "correct horse")), lock, PEPPER));
+  assert.ok(!(await authorized(req("/", basic("anyone", "wrong")), lock, PEPPER)));
+  assert.ok(!(await authorized(req("/"), lock, PEPPER)));
+  assert.ok(!(await authorized(req("/", "Basic !!!not-base64"), lock, PEPPER)));
+  assert.ok(!(await authorized(req("/", "Bearer tok"), lock, PEPPER)));
 });
 
 test("an unlocked path is served straight from assets", async () => {

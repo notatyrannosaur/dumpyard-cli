@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { build } from "../src/build.mjs";
 import * as locks from "../src/locks.mjs";
+import * as store from "../src/store.mjs";
 
 const TEMPLATES = fileURLToPath(new URL("../templates", import.meta.url));
 
@@ -81,13 +82,16 @@ test("end to end: the generated password opens the gate, and nothing is cached",
   const repo = scaffold();
   write(repo, "private-xyz/brief.md", "# Brief\n");
   write(repo, "private-xyz/spec.pdf", "%PDF-1.4");
-  const password = await locks.lock(repo, "/private-xyz/");
+  const { password } = await locks.lock(repo, "/private-xyz/");
   await build(repo, { quiet: true });
 
   const worker = (
     await import(`${pathToFileURL(join(repo, "worker", "index.js")).href}?v=${Date.now()}`)
   ).default;
-  const env = { ASSETS: { fetch: async () => new Response("CONTENT", { headers: { "Cache-Control": "public" } }) } };
+  const env = {
+    ASSETS: { fetch: async () => new Response("CONTENT", { headers: { "Cache-Control": "public" } }) },
+    DUMPYARD_PEPPER: store.pepper(repo).value,
+  };
   const hit = (path, pw) =>
     worker.fetch(
       new Request("https://x.dev" + path, pw

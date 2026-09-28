@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { digest } from "../templates/worker/hash.js";
 import * as store from "./store.mjs";
+import { passphrase } from "./words.mjs";
 
 export const locksPath = (repo) => join(repo, "worker", "locks.js");
 
@@ -31,24 +32,45 @@ export function checkPath(path) {
   return path;
 }
 
-// Returns the password, and remembers it so it can be read back later.
+// A hand-picked password is held to a floor. Generated ones are always fine.
+export function checkChosen(chosen) {
+  if (chosen === undefined) return;
+  if (chosen.length < 12) throw new Error("a hand-picked password must be at least 12 characters");
+  if (new Set(chosen).size < 6) throw new Error("that password is too repetitive — pick one with more variety, or let dumpyard generate one");
+}
+
+// The site's pepper, creating it on the first lock. Refuses to create one when
+// the site already has locks: that means they were made on another machine,
+// and a new pepper would silently break every one of their passwords.
+export async function pepperFor(repo) {
+  const have = store.pepper(repo);
+  if (have) return have.value;
+  if (Object.keys(await load(repo)).length) {
+    throw new Error(
+      "this site's pepper isn't on this machine, so it can't make or check passwords here. " +
+        `Copy peppers.json and passwords.json from the machine that set it up into ${store.home()}`,
+    );
+  }
+  return store.createPepper(repo).value;
+}
+
+// Lock (or re-lock) a path. Returns { password, rotated }: rotated means the
+// path already had a password and the old one no longer works.
 export async function lock(repo, path, chosen, url) {
   checkPath(path);
-  // A short hand-picked password is crackable offline against the hash in the
-  // repo; a generated one carries 72 bits and is not.
-  if (chosen !== undefined && chosen.length < 12) {
-    throw new Error("a hand-picked password must be at least 12 characters");
-  }
-  const password = chosen ?? randomBytes(9).toString("base64url");
+  checkChosen(chosen);
+  const pepper = await pepperFor(repo);
+  const password = chosen ?? passphrase(3);
   const salt = randomBytes(16).toString("hex");
   const locks = await load(repo);
+  const rotated = path in locks;
   // Rotating a password must not quietly extend a link's life, so any expiry
   // already on this path survives the re-lock.
   const expires = locks[path]?.expires;
-  locks[path] = { salt, hash: await digest(salt, password), ...(expires ? { expires } : {}) };
+  locks[path] = { salt, hash: await digest(salt, password, pepper), ...(expires ? { expires } : {}) };
   save(repo, locks);
   store.remember(repo, path, password, url);
-  return password;
+  return { password, rotated };
 }
 
 export async function unlock(repo, path) {

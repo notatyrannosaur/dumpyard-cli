@@ -136,22 +136,46 @@ export async function build(repo, { quiet = false } = {}) {
   });
   const served = sources.filter((r) => !(/\.md$/i.test(r) && !renderable.includes(r)));
 
-  // Titles, and the wikilink index: bare name, filename, and "folder/name".
+  // Titles, and the wikilink index: bare name, filename, "folder/name" and the
+  // full path, each mapping to every page that answers to it.
   const titles = new Map();
   const index = new Map();
-  const add = (key, value) => index.has(key.toLowerCase()) || index.set(key.toLowerCase(), value);
+  const add = (key, entry) => {
+    const k = key.toLowerCase();
+    if (!index.has(k)) index.set(k, []);
+    if (!index.get(k).includes(entry)) index.get(k).push(entry);
+  };
   for (const rel of served) {
     const stem = basename(rel).replace(/\.(md|html?)$/i, "");
     let title = stem;
     if (/\.md$/i.test(rel)) title = titleOf(readFileSync(at(rel), "utf8"), stem);
     else if (/\.html?$/i.test(rel)) title = TITLE.exec(readFileSync(at(rel), "utf8"))?.[1]?.trim() || stem;
     titles.set(rel, title);
-    const entry = { url: urlOf(rel), title };
+    const entry = { url: urlOf(rel), title, rel };
     add(stem, entry);
     add(basename(rel), entry);
     add(`${dirname(rel).split("/").pop()}/${stem}`, entry);
     add(rel, entry);
   }
+  // Resolve a link the way a reader expects: the linking note's own folder
+  // first, then its space, then the whole site. Without this, publishing an
+  // unrelated space could silently repoint [[index]] in another one.
+  const spaceOf = (rel) => rel.split("/")[0];
+  const lookup = (target, from) => {
+    const all = index.get(target.toLowerCase()) ?? [];
+    for (const pool of [
+      all.filter((e) => dirname(e.rel) === dirname(from)),
+      all.filter((e) => spaceOf(e.rel) === spaceOf(from)),
+      all,
+    ]) {
+      if (pool.length === 1) return pool[0];
+      if (pool.length > 1) {
+        warn(from, `[[${target}]] matches ${pool.length} pages; linked ${pool[0].url}. Write [[folder/name]] to choose.`);
+        return pool[0];
+      }
+    }
+    return null;
+  };
 
   const outputs = new Set(["index.html"]);
   const bodies = new Map();
@@ -160,7 +184,7 @@ export async function build(repo, { quiet = false } = {}) {
     const fromLock = lockFor(locks, urlOf(rel))?.prefix ?? null;
     let hidden = null;
     const resolve = (t) => {
-      const hit = index.get(t.toLowerCase());
+      const hit = lookup(t, rel);
       if (!hit) return null;
       if (visibleIn(locks, fromLock, hit.url)) return { ...hit, url: href(hit.url) };
       hidden = t;
@@ -207,8 +231,11 @@ export async function build(repo, { quiet = false } = {}) {
   // One listing per folder that has content, unless you wrote its index.html.
   const dirs = new Set();
   for (const r of served) for (let d = dirname(r); d !== "."; d = dirname(d)) dirs.add(d);
+  // A folder with its own index.html is an app: it gets no listing, and
+  // neither does anything inside it (no generated page in its js/ folder).
+  const apps = [...dirs].filter((d) => served.includes(`${d}/index.html`));
   for (const dir of dirs) {
-    if (served.includes(`${dir}/index.html`)) continue; // yours
+    if (apps.some((a) => dir === a || dir.startsWith(`${a}/`))) continue; // yours
     writeIndex(root, dir, served, titles, locks, bodies);
     outputs.add(`${dir}/index.html`);
   }

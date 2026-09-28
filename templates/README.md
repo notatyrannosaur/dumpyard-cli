@@ -8,6 +8,7 @@ generated files by hand.
 ```sh
 dumpyard publish report.html                    # public, at /report/
 dumpyard publish ./project-xyz/ --set-password  # whole folder, one password
+dumpyard publish more.md --space project-xyz --update   # add to it
 dumpyard lock /project-xyz/                     # lock, or rotate a password
 dumpyard unlock /project-xyz/
 dumpyard remove /project-xyz/                   # take it off the site
@@ -40,5 +41,7 @@ llms.txt         instructions for agents working in this repo
   deployed site, not these sources.
 - **Your own files win.** If you write `index.html` or `foo.html` yourself,
   dumpyard never overwrites it. It only rewrites files it generated.
-- **Passwords are not stored here.** They live in `~/.config/dumpyard/` on the
-  machine that created them.
+- **Passwords and the pepper are not stored here.** They live in
+  `~/.config/dumpyard/` on the machine that created them, and the pepper also in
+  Cloudflare as the `DUMPYARD_PEPPER` secret. Copy that folder to use the site
+  from another machine.

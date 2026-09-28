@@ -31,7 +31,7 @@ test("the store never lives inside a content repo", () => {
 
 test("passwords are readable back, and the file is owner-only", async () => {
   const repo = scaffold();
-  const password = await locks.lock(repo, "/project-xyz/", undefined, "https://x.dev");
+  const { password } = await locks.lock(repo, "/project-xyz/", undefined, "https://x.dev");
   assert.equal(store.recall(repo, "/project-xyz/"), password, "must be retrievable");
   // Retrievable a second and third time — agents re-share links.
   assert.equal(store.recall(repo, "/project-xyz/"), password);
@@ -54,8 +54,8 @@ test("unlocking forgets the password", async () => {
 
 test("two repos keep separate passwords for the same path", async () => {
   const [a, b] = [scaffold(), scaffold()];
-  const pa = await locks.lock(a, "/shared/", undefined, "https://a.dev");
-  const pb = await locks.lock(b, "/shared/", undefined, "https://b.dev");
+  const { password: pa } = await locks.lock(a, "/shared/", undefined, "https://a.dev");
+  const { password: pb } = await locks.lock(b, "/shared/", undefined, "https://b.dev");
   assert.notEqual(pa, pb);
   assert.equal(store.recall(a, "/shared/"), pa);
   assert.equal(store.recall(b, "/shared/"), pb);

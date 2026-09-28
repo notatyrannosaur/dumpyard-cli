@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as locks from "../src/locks.mjs";
+import * as store from "../src/store.mjs";
 
 const TEMPLATES = fileURLToPath(new URL("../templates", import.meta.url));
 const scaffold = () => {
@@ -13,14 +14,17 @@ const scaffold = () => {
   cpSync(TEMPLATES, repo, { recursive: true });
   return repo;
 };
-const gate = async (repo) =>
-  (await import(`${pathToFileURL(join(repo, "worker", "index.js")).href}?v=${Math.random()}`)).default;
+const gate = async (repo) => {
+  pepper = store.pepper(repo).value;
+  return (await import(`${pathToFileURL(join(repo, "worker", "index.js")).href}?v=${Math.random()}`)).default;
+};
+let pepper; // the repo under test's, set by gate()
 const hit = (worker, path, pw) =>
   worker.fetch(
     new Request("https://x.dev" + path, pw
       ? { headers: { Authorization: "Basic " + Buffer.from("u:" + pw).toString("base64") } }
       : {}),
-    { ASSETS: { fetch: async () => new Response("CONTENT") } },
+    { ASSETS: { fetch: async () => new Response("CONTENT") }, DUMPYARD_PEPPER: pepper },
   );
 // Force an expiry into the past without waiting, by editing the lock table.
 const backdate = async (repo, path) => {
@@ -41,7 +45,7 @@ test("parseWhen reads durations, dates and never; rejects junk and the past", ()
 
 test("a live link still needs the password", async () => {
   const repo = scaffold();
-  const pw = await locks.lock(repo, "/share/", undefined, "https://x.dev");
+  const { password: pw } = await locks.lock(repo, "/share/", undefined, "https://x.dev");
   await locks.setExpiry(repo, "/share/", "7d");
   const worker = await gate(repo);
   assert.equal((await hit(worker, "/share/")).status, 401);
@@ -50,7 +54,7 @@ test("a live link still needs the password", async () => {
 
 test("an expired link is dead even with the right password", async () => {
   const repo = scaffold();
-  const pw = await locks.lock(repo, "/share/", undefined, "https://x.dev");
+  const { password: pw } = await locks.lock(repo, "/share/", undefined, "https://x.dev");
   await locks.setExpiry(repo, "/share/", "7d");
   await backdate(repo, "/share/");
   const worker = await gate(repo);
